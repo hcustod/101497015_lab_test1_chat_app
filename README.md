@@ -1,6 +1,6 @@
 # COMP3133 Lab Test 1 Chat Application
 
-## Setup
+## Local Setup
 
 1. Install dependencies:
 
@@ -20,6 +20,30 @@ npm start
 
 `http://localhost:3000/view/signup.html`  
 `http://localhost:3000/view/login.html`
+
+## Docker Setup
+
+1. Start everything:
+
+```bash
+docker compose up --build
+```
+
+2. Open:
+
+`http://localhost:3000/view/login.html`
+
+3. Stop everything:
+
+```bash
+docker compose down
+```
+
+4. Stop and remove MongoDB data volume:
+
+```bash
+docker compose down -v
+```
 
 ## Project Structure
 

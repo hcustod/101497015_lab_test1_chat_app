@@ -85,6 +85,46 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
+app.get('/api/rooms/:room/messages', async (req, res) => {
+  try {
+    const { room } = req.params;
+    const limit = Number(req.query.limit) || 100;
+
+    if (!room) {
+      return res.status(400).json({ success: false, message: 'Room is required' });
+    }
+
+    const messages = await GroupMessage.find({ room })
+      .sort({ date_sent: 1 })
+      .limit(Math.min(limit, 200))
+      .lean();
+
+    return res.json({ success: true, messages });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Could not load room messages' });
+  }
+});
+
+app.get('/api/users', async (req, res) => {
+  try {
+    const exclude = req.query.exclude ? String(req.query.exclude).trim() : '';
+    const filter = exclude ? { username: { $ne: exclude } } : {};
+
+    const users = await User.find(filter)
+      .select('username -_id')
+      .sort({ username: 1 })
+      .limit(500)
+      .lean();
+
+    return res.json({
+      success: true,
+      users: users.map((user) => user.username)
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Could not load users' });
+  }
+});
+
 const userSockets = new Map();
 const socketUsers = new Map();
 
@@ -133,6 +173,7 @@ io.on('connection', (socket) => {
     }
     socket.join(room);
     socket.data.room = room;
+    socket.emit('roomJoined', { room });
   });
 
   socket.on('leaveRoom', ({ room }) => {

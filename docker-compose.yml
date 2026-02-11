@@ -1,0 +1,33 @@
+services:
+  mongo:
+    image: mongo:7
+    container_name: comp3133-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: comp3133-chat-app
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: 3000
+      MONGODB_URI: mongodb://mongo:27017/comp3133_lab_test_1
+    depends_on:
+      mongo:
+        condition: service_healthy
+
+volumes:
+  mongo_data:

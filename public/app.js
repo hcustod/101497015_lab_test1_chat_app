@@ -1,6 +1,7 @@
 const socket = io();
 const rooms = ['devops', 'cloud computing', 'covid19', 'sports', 'nodeJS'];
 let currentRoom = null;
+let pendingRoom = null;
 let typingTimeout = null;
 let privateTypingTimeout = null;
 
@@ -22,6 +23,26 @@ rooms.forEach((room) => {
 
 socket.emit('registerUser', { username: currentUser.username });
 
+async function loadUserSuggestions() {
+  try {
+    const response = await fetch(`/api/users?exclude=${encodeURIComponent(currentUser.username)}`);
+    const data = await response.json();
+
+    if (!response.ok || !data.success) {
+      return;
+    }
+
+    const datalist = $('#userSuggestions');
+    datalist.empty();
+    data.users.forEach((username) => {
+      datalist.append(`<option value="${username}"></option>`);
+    });
+  } catch (error) {
+  }
+}
+
+loadUserSuggestions();
+
 $('#logoutBtn').on('click', () => {
   localStorage.removeItem('user');
   window.location.href = '/view/login.html';
@@ -32,11 +53,8 @@ $('#joinRoomBtn').on('click', () => {
   if (!room) {
     return;
   }
+  pendingRoom = room;
   socket.emit('joinRoom', { room, username: currentUser.username });
-  currentRoom = room;
-  $('#activeRoom').text(room);
-  $('#messages').empty();
-  $('#typingStatus').text('');
 });
 
 $('#leaveRoomBtn').on('click', () => {
@@ -45,7 +63,9 @@ $('#leaveRoomBtn').on('click', () => {
   }
   socket.emit('leaveRoom', { room: currentRoom, username: currentUser.username });
   currentRoom = null;
+  pendingRoom = null;
   $('#activeRoom').text('none');
+  $('#messages').empty();
   $('#typingStatus').text('');
 });
 
@@ -55,6 +75,45 @@ function appendMessage(containerId, text) {
   const container = $(containerId)[0];
   container.scrollTop = container.scrollHeight;
 }
+
+async function loadRoomMessages(room) {
+  try {
+    const response = await fetch(`/api/rooms/${encodeURIComponent(room)}/messages`);
+    const data = await response.json();
+
+    if (currentRoom !== room) {
+      return;
+    }
+
+    $('#messages').empty();
+
+    if (!response.ok || !data.success) {
+      appendMessage('#messages', 'Could not load previous messages for this room.');
+      return;
+    }
+
+    data.messages.forEach((message) => {
+      appendMessage('#messages', `[${message.room}] ${message.from_user}: ${message.message}`);
+    });
+  } catch (error) {
+    if (currentRoom !== room) {
+      return;
+    }
+    $('#messages').empty();
+    appendMessage('#messages', 'Could not load previous messages for this room.');
+  }
+}
+
+socket.on('roomJoined', (data) => {
+  if (!data.room || data.room !== pendingRoom) {
+    return;
+  }
+  currentRoom = data.room;
+  pendingRoom = null;
+  $('#activeRoom').text(data.room);
+  $('#typingStatus').text('');
+  loadRoomMessages(data.room);
+});
 
 $('#sendBtn').on('click', () => {
   const message = $('#messageInput').val().trim();
@@ -99,6 +158,10 @@ $('#privateMessageInput').on('keypress', () => {
     username: currentUser.username,
     to_user
   });
+});
+
+$('#privateToInput').on('focus', () => {
+  loadUserSuggestions();
 });
 
 socket.on('groupMessage', (data) => {
