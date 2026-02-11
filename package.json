@@ -1,0 +1,27 @@
+{
+  "name": "comp3133-lab-test-1",
+  "version": "1.0.0",
+  "description": "COMP3133 Lab Test 1 Chat Application",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hcustod/101497015_lab_test1_chat_app.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/hcustod/101497015_lab_test1_chat_app/issues"
+  },
+  "homepage": "https://github.com/hcustod/101497015_lab_test1_chat_app#readme",
+  "dependencies": {
+    "express": "^5.2.1",
+    "mongoose": "^9.2.0",
+    "socket.io": "^4.8.3"
+  }
+}
