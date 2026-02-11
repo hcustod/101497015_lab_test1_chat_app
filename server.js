@@ -10,13 +10,31 @@ const PrivateMessage = require('./models/PrivateMessage');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
+const socketServer = new Server(server);
 
-const PORT = process.env.PORT || 3000;
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/comp3133_lab_test_1';
+const port = process.env.PORT || 3000;
+const mongoUri = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/comp3133_lab_test_1';
+const allowedRooms = new Set(['devops', 'cloud computing', 'covid19', 'sports', 'nodeJS']);
+
+function sanitizeString(value, maxLength = 120) {
+  if (typeof value !== 'string') {
+    return '';
+  }
+  const cleaned = value.trim();
+  if (!cleaned) {
+    return '';
+  }
+  return cleaned.length > maxLength ? cleaned.slice(0, maxLength) : cleaned;
+}
+
+function isAllowedRoom(room) {
+  return allowedRooms.has(room);
+}
+
+mongoose.set('sanitizeFilter', true);
 
 mongoose
-  .connect(MONGODB_URI)
+  .connect(mongoUri)
   .then(() => {
     console.log('MongoDB connected');
   })
@@ -35,7 +53,10 @@ app.get('/', (req, res) => {
 
 app.post('/api/signup', async (req, res) => {
   try {
-    const { username, firstname, lastname, password } = req.body;
+    const username = sanitizeString(req.body.username, 40);
+    const firstname = sanitizeString(req.body.firstname, 60);
+    const lastname = sanitizeString(req.body.lastname, 60);
+    const password = sanitizeString(req.body.password, 200);
 
     if (!username || !firstname || !lastname || !password) {
       return res.status(400).json({ success: false, message: 'All fields are required' });
@@ -60,7 +81,8 @@ app.post('/api/signup', async (req, res) => {
 
 app.post('/api/login', async (req, res) => {
   try {
-    const { username, password } = req.body;
+    const username = sanitizeString(req.body.username, 40);
+    const password = sanitizeString(req.body.password, 200);
 
     if (!username || !password) {
       return res.status(400).json({ success: false, message: 'Username and password are required' });
@@ -87,10 +109,10 @@ app.post('/api/login', async (req, res) => {
 
 app.get('/api/rooms/:room/messages', async (req, res) => {
   try {
-    const { room } = req.params;
+    const room = sanitizeString(req.params.room, 40);
     const limit = Number(req.query.limit) || 100;
 
-    if (!room) {
+    if (!room || !isAllowedRoom(room)) {
       return res.status(400).json({ success: false, message: 'Room is required' });
     }
 
@@ -107,10 +129,8 @@ app.get('/api/rooms/:room/messages', async (req, res) => {
 
 app.get('/api/users', async (req, res) => {
   try {
-    const exclude = req.query.exclude ? String(req.query.exclude).trim() : '';
-    const filter = exclude ? { username: { $ne: exclude } } : {};
-
-    const users = await User.find(filter)
+    const exclude = sanitizeString(req.query.exclude, 40);
+    const users = await User.find({})
       .select('username -_id')
       .sort({ username: 1 })
       .limit(500)
@@ -118,87 +138,104 @@ app.get('/api/users', async (req, res) => {
 
     return res.json({
       success: true,
-      users: users.map((user) => user.username)
+      users: users
+        .map((user) => user.username)
+        .filter((username) => (exclude ? username !== exclude : true))
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: 'Could not load users' });
   }
 });
 
-const userSockets = new Map();
-const socketUsers = new Map();
+const socketIdsByUser = new Map();
+const userBySocketId = new Map();
 
-function addSocketForUser(username, socketId) {
-  if (!userSockets.has(username)) {
-    userSockets.set(username, new Set());
+function trackSocket(username, socketId) {
+  if (!socketIdsByUser.has(username)) {
+    socketIdsByUser.set(username, new Set());
   }
-  userSockets.get(username).add(socketId);
-  socketUsers.set(socketId, username);
+  socketIdsByUser.get(username).add(socketId);
+  userBySocketId.set(socketId, username);
 }
 
-function removeSocket(socketId) {
-  const username = socketUsers.get(socketId);
+function untrackSocket(socketId) {
+  const username = userBySocketId.get(socketId);
   if (!username) {
     return;
   }
-  const sockets = userSockets.get(username);
+  const sockets = socketIdsByUser.get(username);
   if (sockets) {
     sockets.delete(socketId);
     if (sockets.size === 0) {
-      userSockets.delete(username);
+      socketIdsByUser.delete(username);
     }
   }
-  socketUsers.delete(socketId);
+  userBySocketId.delete(socketId);
 }
 
-io.on('connection', (socket) => {
+socketServer.on('connection', (socket) => {
   socket.on('registerUser', ({ username }) => {
-    if (!username) {
+    const safeUsername = sanitizeString(username, 40);
+    if (!safeUsername) {
       return;
     }
-    socket.data.username = username;
-    addSocketForUser(username, socket.id);
+    socket.data.username = safeUsername;
+    trackSocket(safeUsername, socket.id);
   });
 
   socket.on('joinRoom', ({ room, username }) => {
-    if (!room) {
+    const safeRoom = sanitizeString(room, 40);
+    const safeUsername = sanitizeString(username, 40);
+
+    if (!safeRoom || !isAllowedRoom(safeRoom)) {
+      socket.emit('serverError', { message: 'Invalid room' });
       return;
     }
-    if (username) {
-      socket.data.username = username;
-      addSocketForUser(username, socket.id);
+    if (safeUsername) {
+      socket.data.username = safeUsername;
+      trackSocket(safeUsername, socket.id);
     }
     if (socket.data.room) {
       socket.leave(socket.data.room);
     }
-    socket.join(room);
-    socket.data.room = room;
-    socket.emit('roomJoined', { room });
+    socket.join(safeRoom);
+    socket.data.room = safeRoom;
+    socket.emit('roomJoined', { room: safeRoom });
   });
 
   socket.on('leaveRoom', ({ room }) => {
-    if (!room) {
+    const safeRoom = sanitizeString(room, 40);
+    if (!safeRoom) {
       return;
     }
-    socket.leave(room);
-    if (socket.data.room === room) {
+    socket.leave(safeRoom);
+    if (socket.data.room === safeRoom) {
       socket.data.room = null;
     }
   });
 
   socket.on('groupMessage', async ({ from_user, room, message }) => {
-    if (!from_user || !room || !message) {
+    const fromUser = sanitizeString(from_user, 40);
+    const roomName = sanitizeString(room, 40);
+    const messageText = sanitizeString(message, 2000);
+    const activeUsername = sanitizeString(socket.data.username, 40);
+    const activeRoom = sanitizeString(socket.data.room, 40);
+
+    if (!fromUser || !roomName || !messageText || !activeUsername || !activeRoom || !isAllowedRoom(roomName)) {
+      return;
+    }
+    if (fromUser !== activeUsername || roomName !== activeRoom) {
       return;
     }
     try {
       const savedMessage = await GroupMessage.create({
-        from_user,
-        room,
-        message,
+        from_user: fromUser,
+        room: roomName,
+        message: messageText,
         date_sent: new Date()
       });
 
-      io.to(room).emit('groupMessage', {
+      socketServer.to(roomName).emit('groupMessage', {
         from_user: savedMessage.from_user,
         room: savedMessage.room,
         message: savedMessage.message,
@@ -210,24 +247,38 @@ io.on('connection', (socket) => {
   });
 
   socket.on('privateMessage', async ({ from_user, to_user, message }) => {
-    if (!from_user || !to_user || !message) {
+    const fromUser = sanitizeString(from_user, 40);
+    const toUser = sanitizeString(to_user, 40);
+    const messageText = sanitizeString(message, 2000);
+    const activeUsername = sanitizeString(socket.data.username, 40);
+
+    if (!fromUser || !toUser || !messageText || !activeUsername) {
+      return;
+    }
+    if (fromUser !== activeUsername) {
       return;
     }
 
     try {
+      const recipientExists = await User.exists({ username: toUser });
+      if (!recipientExists) {
+        socket.emit('serverError', { message: 'Recipient username does not exist' });
+        return;
+      }
+
       const savedMessage = await PrivateMessage.create({
-        from_user,
-        to_user,
-        message,
+        from_user: fromUser,
+        to_user: toUser,
+        message: messageText,
         date_sent: new Date()
       });
 
-      const recipientSockets = userSockets.get(to_user) || new Set();
-      const senderSockets = userSockets.get(from_user) || new Set();
+      const recipientSockets = socketIdsByUser.get(toUser) || new Set();
+      const senderSockets = socketIdsByUser.get(fromUser) || new Set();
       const targetSocketIds = new Set([...recipientSockets, ...senderSockets]);
 
       targetSocketIds.forEach((socketId) => {
-        io.to(socketId).emit('privateMessage', {
+        socketServer.to(socketId).emit('privateMessage', {
           from_user: savedMessage.from_user,
           to_user: savedMessage.to_user,
           message: savedMessage.message,
@@ -240,28 +291,34 @@ io.on('connection', (socket) => {
   });
 
   socket.on('typing', ({ room, username, to_user }) => {
-    if (!username) {
+    const safeRoom = sanitizeString(room, 40);
+    const safeUsername = sanitizeString(username, 40);
+    const toUser = sanitizeString(to_user, 40);
+    const activeUsername = sanitizeString(socket.data.username, 40);
+    const activeRoom = sanitizeString(socket.data.room, 40);
+
+    if (!safeUsername || !activeUsername || safeUsername !== activeUsername) {
       return;
     }
 
-    if (to_user) {
-      const recipientSockets = userSockets.get(to_user) || new Set();
+    if (toUser) {
+      const recipientSockets = socketIdsByUser.get(toUser) || new Set();
       recipientSockets.forEach((socketId) => {
-        io.to(socketId).emit('privateTyping', { from_user: username });
+        socketServer.to(socketId).emit('privateTyping', { from_user: safeUsername });
       });
       return;
     }
 
-    if (room) {
-      socket.to(room).emit('typing', { room, username });
+    if (safeRoom && isAllowedRoom(safeRoom) && activeRoom === safeRoom) {
+      socket.to(safeRoom).emit('typing', { room: safeRoom, username: safeUsername });
     }
   });
 
   socket.on('disconnect', () => {
-    removeSocket(socket.id);
+    untrackSocket(socket.id);
   });
 });
 
-server.listen(PORT, () => {
-  console.log(`Server running at http://localhost:${PORT}`);
+server.listen(port, () => {
+  console.log(`Server running at http://localhost:${port}`);
 });

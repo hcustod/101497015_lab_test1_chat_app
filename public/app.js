@@ -1,29 +1,35 @@
-const socket = io();
-const rooms = ['devops', 'cloud computing', 'covid19', 'sports', 'nodeJS'];
-let currentRoom = null;
-let pendingRoom = null;
-let typingTimeout = null;
+const socketClient = io();
+const availableRooms = ['devops', 'cloud computing', 'covid19', 'sports', 'nodeJS'];
+let activeRoom = null;
+let pendingRoomJoin = null;
+let roomTypingTimeout = null;
 let privateTypingTimeout = null;
 
-const rawUser = localStorage.getItem('user');
-if (!rawUser) {
+const storedUser = localStorage.getItem('user');
+if (!storedUser) {
   window.location.href = '/view/login.html';
 }
 
-const currentUser = JSON.parse(rawUser || '{}');
+let currentUser = {};
+try {
+  currentUser = JSON.parse(storedUser || '{}');
+} catch (error) {
+  localStorage.removeItem('user');
+  window.location.href = '/view/login.html';
+}
 if (!currentUser.username) {
   localStorage.removeItem('user');
   window.location.href = '/view/login.html';
 }
 
 $('#currentUser').text(currentUser.username);
-rooms.forEach((room) => {
-  $('#roomSelect').append(`<option value="${room}">${room}</option>`);
+availableRooms.forEach((roomName) => {
+  $('#roomSelect').append(`<option value="${roomName}">${roomName}</option>`);
 });
 
-socket.emit('registerUser', { username: currentUser.username });
+socketClient.emit('registerUser', { username: currentUser.username });
 
-async function loadUserSuggestions() {
+async function refreshUserSuggestions() {
   try {
     const response = await fetch(`/api/users?exclude=${encodeURIComponent(currentUser.username)}`);
     const data = await response.json();
@@ -32,16 +38,29 @@ async function loadUserSuggestions() {
       return;
     }
 
-    const datalist = $('#userSuggestions');
-    datalist.empty();
+    const hintBox = $('#userSuggestions');
+    hintBox.empty();
     data.users.forEach((username) => {
-      datalist.append(`<option value="${username}"></option>`);
+      hintBox.append(`<option value="${username}"></option>`);
     });
   } catch (error) {
   }
 }
 
-loadUserSuggestions();
+refreshUserSuggestions();
+
+async function userExists(username) {
+  try {
+    const response = await fetch('/api/users');
+    const data = await response.json();
+    if (!response.ok || !data.success || !Array.isArray(data.users)) {
+      return false;
+    }
+    return data.users.includes(username);
+  } catch (error) {
+    return false;
+  }
+}
 
 $('#logoutBtn').on('click', () => {
   localStorage.removeItem('user');
@@ -49,99 +68,108 @@ $('#logoutBtn').on('click', () => {
 });
 
 $('#joinRoomBtn').on('click', () => {
-  const room = $('#roomSelect').val();
-  if (!room) {
+  const selectedRoom = $('#roomSelect').val();
+  if (!selectedRoom) {
     return;
   }
-  pendingRoom = room;
-  socket.emit('joinRoom', { room, username: currentUser.username });
+  pendingRoomJoin = selectedRoom;
+  socketClient.emit('joinRoom', { room: selectedRoom, username: currentUser.username });
 });
 
 $('#leaveRoomBtn').on('click', () => {
-  if (!currentRoom) {
+  if (!activeRoom) {
     return;
   }
-  socket.emit('leaveRoom', { room: currentRoom, username: currentUser.username });
-  currentRoom = null;
-  pendingRoom = null;
+  socketClient.emit('leaveRoom', { room: activeRoom, username: currentUser.username });
+  activeRoom = null;
+  pendingRoomJoin = null;
   $('#activeRoom').text('none');
   $('#messages').empty();
   $('#typingStatus').text('');
 });
 
-function appendMessage(containerId, text) {
+function appendMessageLine(targetBox, text) {
   const item = $('<div class="message-item"></div>').text(text);
-  $(containerId).append(item);
-  const container = $(containerId)[0];
-  container.scrollTop = container.scrollHeight;
+  $(targetBox).append(item);
+  const panel = $(targetBox)[0];
+  panel.scrollTop = panel.scrollHeight;
 }
 
-async function loadRoomMessages(room) {
+async function loadRoomHistory(roomName) {
   try {
-    const response = await fetch(`/api/rooms/${encodeURIComponent(room)}/messages`);
+    const response = await fetch(`/api/rooms/${encodeURIComponent(roomName)}/messages`);
     const data = await response.json();
 
-    if (currentRoom !== room) {
+    if (activeRoom !== roomName) {
       return;
     }
 
     $('#messages').empty();
 
     if (!response.ok || !data.success) {
-      appendMessage('#messages', 'Could not load previous messages for this room.');
+      appendMessageLine('#messages', 'Could not load previous messages for this room.');
       return;
     }
 
     data.messages.forEach((message) => {
-      appendMessage('#messages', `[${message.room}] ${message.from_user}: ${message.message}`);
+      appendMessageLine('#messages', `[${message.room}] ${message.from_user}: ${message.message}`);
     });
   } catch (error) {
-    if (currentRoom !== room) {
+    if (activeRoom !== roomName) {
       return;
     }
     $('#messages').empty();
-    appendMessage('#messages', 'Could not load previous messages for this room.');
+    appendMessageLine('#messages', 'Could not load previous messages for this room.');
   }
 }
 
-socket.on('roomJoined', (data) => {
-  if (!data.room || data.room !== pendingRoom) {
+socketClient.on('roomJoined', (data) => {
+  if (!data.room || data.room !== pendingRoomJoin) {
     return;
   }
-  currentRoom = data.room;
-  pendingRoom = null;
+  activeRoom = data.room;
+  pendingRoomJoin = null;
   $('#activeRoom').text(data.room);
   $('#typingStatus').text('');
-  loadRoomMessages(data.room);
+  loadRoomHistory(data.room);
 });
 
 $('#sendBtn').on('click', () => {
   const message = $('#messageInput').val().trim();
-  if (!currentRoom || !message) {
+  if (!activeRoom || !message) {
     return;
   }
-  socket.emit('groupMessage', {
+  socketClient.emit('groupMessage', {
     from_user: currentUser.username,
-    room: currentRoom,
+    room: activeRoom,
     message
   });
   $('#messageInput').val('');
 });
 
 $('#messageInput').on('keypress', () => {
-  if (!currentRoom) {
+  if (!activeRoom) {
     return;
   }
-  socket.emit('typing', { room: currentRoom, username: currentUser.username });
+  socketClient.emit('typing', { room: activeRoom, username: currentUser.username });
 });
 
-$('#sendPrivateBtn').on('click', () => {
+$('#sendPrivateBtn').on('click', async () => {
   const to_user = $('#privateToInput').val().trim();
   const message = $('#privateMessageInput').val().trim();
   if (!to_user || !message) {
     return;
   }
-  socket.emit('privateMessage', {
+  if (to_user === currentUser.username) {
+    alert('You cannot send a private message to yourself');
+    return;
+  }
+  const recipientFound = await userExists(to_user);
+  if (!recipientFound) {
+    alert('Recipient username does not exist');
+    return;
+  }
+  socketClient.emit('privateMessage', {
     from_user: currentUser.username,
     to_user,
     message
@@ -154,42 +182,42 @@ $('#privateMessageInput').on('keypress', () => {
   if (!to_user) {
     return;
   }
-  socket.emit('typing', {
+  socketClient.emit('typing', {
     username: currentUser.username,
     to_user
   });
 });
 
 $('#privateToInput').on('focus', () => {
-  loadUserSuggestions();
+  refreshUserSuggestions();
 });
 
-socket.on('groupMessage', (data) => {
-  if (!currentRoom || data.room !== currentRoom) {
+socketClient.on('groupMessage', (data) => {
+  if (!activeRoom || data.room !== activeRoom) {
     return;
   }
-  appendMessage('#messages', `[${data.room}] ${data.from_user}: ${data.message}`);
+  appendMessageLine('#messages', `[${data.room}] ${data.from_user}: ${data.message}`);
 });
 
-socket.on('privateMessage', (data) => {
+socketClient.on('privateMessage', (data) => {
   if (data.from_user !== currentUser.username && data.to_user !== currentUser.username) {
     return;
   }
-  appendMessage('#privateMessages', `[PRIVATE] ${data.from_user} -> ${data.to_user}: ${data.message}`);
+  appendMessageLine('#privateMessages', `[PRIVATE] ${data.from_user} -> ${data.to_user}: ${data.message}`);
 });
 
-socket.on('typing', (data) => {
-  if (!currentRoom || data.room !== currentRoom || data.username === currentUser.username) {
+socketClient.on('typing', (data) => {
+  if (!activeRoom || data.room !== activeRoom || data.username === currentUser.username) {
     return;
   }
   $('#typingStatus').text(`${data.username} is typing...`);
-  clearTimeout(typingTimeout);
-  typingTimeout = setTimeout(() => {
+  clearTimeout(roomTypingTimeout);
+  roomTypingTimeout = setTimeout(() => {
     $('#typingStatus').text('');
   }, 1000);
 });
 
-socket.on('privateTyping', (data) => {
+socketClient.on('privateTyping', (data) => {
   if (!data.from_user || data.from_user === currentUser.username) {
     return;
   }
@@ -200,6 +228,6 @@ socket.on('privateTyping', (data) => {
   }, 1000);
 });
 
-socket.on('serverError', (data) => {
+socketClient.on('serverError', (data) => {
   alert(data.message || 'Server error');
 });
