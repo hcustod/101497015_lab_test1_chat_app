@@ -31,11 +31,38 @@ function isAllowedRoom(room) {
   return allowedRooms.has(room);
 }
 
+async function ensureDefaultUsers() {
+  const defaults = [
+    { username: 'test1', firstname: 'Test', lastname: 'One', password: 'asdfasdf' },
+    { username: 'test2', firstname: 'Test', lastname: 'Two', password: 'asdfasdf' }
+  ];
+
+  await Promise.all(
+    defaults.map((user) =>
+      User.updateOne(
+        { username: user.username },
+        {
+          $set: {
+            firstname: user.firstname,
+            lastname: user.lastname,
+            password: user.password
+          },
+          $setOnInsert: {
+            createon: new Date()
+          }
+        },
+        { upsert: true }
+      )
+    )
+  );
+}
+
 mongoose.set('sanitizeFilter', true);
 
 mongoose
   .connect(mongoUri)
-  .then(() => {
+  .then(async () => {
+    await ensureDefaultUsers();
     console.log('MongoDB connected');
   })
   .catch((error) => {
