@@ -2,7 +2,7 @@
 
 This is a real time chat app built with Express, Socket.io, MongoDB (Mongoose), and Docker with signup/login and room based messaging.  
 
-It supports group chat, private messages, and has persistent room message storage. It's simply built and even easier to run thanks to Docker! 
+It supports group chat, private messages, and has persistent room message storage. It's simply built and even easier to run thanks to Docker!!!
 
 ## Run
 

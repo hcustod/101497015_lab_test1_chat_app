@@ -1,5 +1,6 @@
 const socketClient = io();
 const availableRooms = ['devops', 'cloud computing', 'covid19', 'sports', 'nodeJS'];
+
 let activeRoom = null;
 let pendingRoomJoin = null;
 let roomTypingTimeout = null;
@@ -11,6 +12,7 @@ if (!storedUser) {
 }
 
 let currentUser = {};
+
 try {
   currentUser = JSON.parse(storedUser || '{}');
 } catch (error) {
