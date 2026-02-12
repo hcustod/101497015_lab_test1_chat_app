@@ -12,15 +12,15 @@ docker compose up --build
 
 Open: `http://localhost:3000/view/login.html`
 
+### Docker 
+![Login Screen](screenshots/docker.png)
+The containers deployed by the docker-compose provided. 
+
 ## Features
 
 ### Signup
 ![Signup Screen](screenshots/accountcreation.png)
 You are able to create a new user account and it stores the user profile in MongoDB with unique username validation.
-
-### Login
-![Login Screen](screenshots/docker.png)
-This app authenticates existing users and starts the chat session using localStorage.
 
 ### Main Chat Page
 ![Main Chat Page](screenshots/chat0.png)
